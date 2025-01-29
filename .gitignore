@@ -15,4 +15,7 @@ pom.xml.asc
 .clj-kondo/
 .idea/
 .lsp/
-**~**
+*~*
+movies.csv
+ratings.csv
+tags.csv
