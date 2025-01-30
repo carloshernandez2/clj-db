@@ -28,7 +28,7 @@
   (fn [_]
     (let [reader (io/reader table)]
       {:__result__ (csv-data->maps (csv/read-csv reader))
-       :__resourses__ [reader]})))
+       :__resources__ [reader]})))
 
 (defn projection
   [& cols]
@@ -80,6 +80,7 @@
   ([[current-key current-plan-seq :as plan-nodes] iresultset]
    (let [res (reduce (fn [acc plan-fn] (core/merge acc (plan-fn acc))) iresultset current-plan-seq)]
      (doseq [resource (:__resources__ res)]
+       (doall (:__result__ res))
        (.close resource))
      (if-let [next-plan-nodes (nnext plan-nodes)]
        (recur next-plan-nodes (rename-keys res {:__result__ current-key}))

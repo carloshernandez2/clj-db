@@ -48,7 +48,7 @@
              {:name "David", :age "60", :city "Madrid", :country "Spain"}
              {:name "Eve", :age "70", :city "Rome", :country "Italy"}]}
            (select-keys res [:__result__])))
-    (.close (first (:__resourses__ res)))))
+    (.close (first (:__resources__ res)))))
 
 (deftest projection-test
   (is (= {:__result__ [{:name "Alice" :age 30}
