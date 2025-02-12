@@ -3,9 +3,21 @@
   (:require
    [clojure.core :as core]
    [clojure.data.csv :as csv]
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.set :refer [rename-keys]]))
 
+(defn create-table-from-csv [table-name]
+  (with-open [table-reader (io/reader (str table-name "_table.csv"))]
+    (let [csv-table (csv/read-csv table-reader)
+          columns (mapv keyword (first csv-table))
+          _data (rest csv-table)]
+      (spit (str table-name "_catalog.edn") {:columns columns}))))
+
+
+(comment
+  (create-table-from-csv "person")
+  (create-table-from-csv "dog"))
 ; Query executor that takes a parsed query plan made up of plan nodes assigned to query keys and executes it retrieving data from csv files.
 ; It makes use of lazy sequences as an interface between query plan nodes to avoid fetching all the data when it is not necessary.
 ; It supports the following query plan nodes:
@@ -16,19 +28,19 @@
 ; - Sort: Sorts in ascending order by the given fields
 ; - Merge: Merge the result of many queries (Like union in SQL)
 
-(defn csv-data->maps [csv-data]
-  (map zipmap
-       (->> (first csv-data)
-            (map keyword)
-            repeat)
-       (rest csv-data)))
+(defn csv-data->maps [columns csv-data]
+  (let [columns-struct (apply create-struct columns)]
+    (map (partial apply struct columns-struct)
+         (rest csv-data))))
 
-(defn scan
+(defn csv-scan
   [table]
   (fn [_]
-    (let [reader (io/reader table)]
-      {:__result__ (csv-data->maps (csv/read-csv reader))
-       :__resources__ [reader]})))
+    (let [table-reader (io/reader (str table "_table.csv"))
+          catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
+          columns (:columns (edn/read catalog-reader))]
+      {:__result__ (csv-data->maps columns (csv/read-csv table-reader))
+       :__resources__ [table-reader catalog-reader]})))
 
 (defn projection
   [& cols]

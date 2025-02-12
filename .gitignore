@@ -16,6 +16,8 @@ pom.xml.asc
 .idea/
 .lsp/
 *~*
-movies.csv
-ratings.csv
-tags.csv
+*#*
+*$*
+movies_*
+ratings_*
+tags_*

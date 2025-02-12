@@ -2,10 +2,10 @@
   (:refer-clojure :exclude [and or sort < >])
   (:require
    [clojure.test :refer [deftest is]]
-   [mydb :refer [and limit merge or projection scan selection sort < >]]))
+   [mydb :refer [and limit merge or projection csv-scan selection sort < >]]))
 
-(def person-table "person_table.csv")
-(def dog-table "dog_table.csv")
+(def person-table "person")
+(def dog-table "dog")
 
 (def person-query
   {:__result__
@@ -27,12 +27,12 @@
   (assoc dog-query :people (:__result__ person-query)))
 
 (def plan-nodes
-  [:people [(scan person-table)
+  [:people [(csv-scan person-table)
             (projection :name :age)
             (selection [> :age "30"] and [< :age "70"])
             (limit 2)
             (sort :age)]
-   :__result__ [(scan dog-table)
+   :__result__ [(csv-scan dog-table)
                 (sort :age :country)
                 (projection :name :age)
                 (selection [< :age "4"])
@@ -40,7 +40,7 @@
                 (merge :people)]])
 
 (deftest scan-test
-  (let [res ((mydb/scan person-table) person-query)]
+  (let [res ((mydb/csv-scan person-table) person-query)]
     (is (= {:__result__
             [{:name "Alice", :age "30", :city "London", :country "UK"}
              {:name "Bob", :age "40", :city "Paris", :country "France"}
@@ -114,18 +114,18 @@
          (mydb/execute plan-nodes))))
 
 (def movies-plan-nodes
-  [:__result__ [(scan "movies.csv")
+  [:__result__ [(csv-scan "movies")
                 (sort :title)
                 (limit 10)]])
 
 (def ratings-plan-nodes
-  [:__result__ [(scan "ratings.csv")
+  [:__result__ [(csv-scan "ratings")
                 (limit 2)]])
 
 (def tags-plan-nodes
-  [:__result__ [(scan "tags.csv")
-                (sort :movieId)
+  [:__result__ [(csv-scan "tags")
                 (limit 2)]])
+                (sort :movieId)
 
 (comment
   (mydb/execute movies-plan-nodes)
