@@ -2,7 +2,8 @@
   (:refer-clojure :exclude [and or sort < >])
   (:require
    [clojure.test :refer [deftest is]]
-   [mydb :refer [and limit merge or projection csv-scan selection sort < >]]))
+   [mydb :refer [< > and csv-scan heap-file-scan limit merge or projection
+                 selection sort]]))
 
 (def person-table "person")
 (def dog-table "dog")
@@ -32,15 +33,26 @@
             (selection [> :age "30"] and [< :age "70"])
             (limit 2)
             (sort :age)]
-   :__result__ [(csv-scan dog-table)
+   :__result__ [(heap-file-scan dog-table)
                 (sort :age :country)
                 (projection :name :age)
                 (selection [< :age "4"])
                 (limit 2)
                 (merge :people)]])
 
-(deftest scan-test
+(deftest csv-scan-test
   (let [res ((mydb/csv-scan person-table) person-query)]
+    (is (= {:__result__
+            [{:name "Alice", :age "30", :city "London", :country "UK"}
+             {:name "Bob", :age "40", :city "Paris", :country "France"}
+             {:name "Charlie", :age "50", :city "Berlin", :country "Germany"}
+             {:name "David", :age "60", :city "Madrid", :country "Spain"}
+             {:name "Eve", :age "70", :city "Rome", :country "Italy"}]}
+           (select-keys res [:__result__])))
+    (.close (first (:__resources__ res)))))
+
+(deftest heap-file-scan-test
+  (let [res ((mydb/heap-file-scan person-table) person-query)]
     (is (= {:__result__
             [{:name "Alice", :age "30", :city "London", :country "UK"}
              {:name "Bob", :age "40", :city "Paris", :country "France"}
@@ -113,21 +125,38 @@
           {:name "Charlie", :age "50"}]
          (mydb/execute plan-nodes))))
 
-(def movies-plan-nodes
+(def movies-plan-nodes-csv
   [:__result__ [(csv-scan "movies")
                 (sort :title)
                 (limit 10)]])
 
-(def ratings-plan-nodes
+(def ratings-plan-nodes-csv
   [:__result__ [(csv-scan "ratings")
                 (limit 2)]])
 
-(def tags-plan-nodes
+(def tags-plan-nodes-csv
   [:__result__ [(csv-scan "tags")
-                (limit 2)]])
                 (sort :movieId)
+                (limit 2)]])
+
+(def movies-plan-nodes
+  [:__result__ [(heap-file-scan "movies")
+                (sort :title)
+                (limit 10)]])
+
+(def ratings-plan-nodes
+  [:__result__ [(heap-file-scan "ratings")
+                (limit 2)]])
+
+(def tags-plan-nodes
+  [:__result__ [(heap-file-scan "tags")
+                (sort :movieId)
+                (limit 2)]])
 
 (comment
+  (mydb/execute movies-plan-nodes-csv)
+  (mydb/execute ratings-plan-nodes-csv)
+  (time (mydb/execute tags-plan-nodes-csv))
   (mydb/execute movies-plan-nodes)
   (mydb/execute ratings-plan-nodes)
-  (mydb/execute tags-plan-nodes))
+  (time (mydb/execute tags-plan-nodes)))
