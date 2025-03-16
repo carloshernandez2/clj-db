@@ -8,7 +8,7 @@
    [clojure.set :refer [rename-keys]]
    [heap-file :as heap-file])
   (:import
-   (java.io Closeable FileInputStream)))
+   (java.io Closeable RandomAccessFile)))
 
 ; Query executor that takes a parsed query plan made up of plan nodes assigned to query keys and executes it retrieving data from csv files.
 ; It makes use of lazy sequences as an interface between query plan nodes to avoid fetching all the data when it is not necessary.
@@ -29,10 +29,10 @@
 
 (defn heap-file-scan [table]
   (fn [_]
-    (let [table-reader (FileInputStream. (str table "_table.cljdb"))
+    (let [table-reader (RandomAccessFile. (str table "_table.cljdb") "r")
           catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
           columns (:columns (edn/read catalog-reader))]
-      {:__result__ (file-data->maps columns (heap-file/read table-reader (count columns)))
+      {:__result__ (file-data->maps columns (heap-file/scan table-reader (count columns)))
        :__resources__ [table-reader catalog-reader]})))
 
 (defn csv-scan
