@@ -22,8 +22,8 @@
 
 (defonce ^:dynamic
   *namespaces*
-  ['query-executor-test
-   'heap-file-test])
+  ['heap-file-test
+   'query-executor-test])
 
 (defn run-tests'
   []

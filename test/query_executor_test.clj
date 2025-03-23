@@ -146,11 +146,13 @@
 
 (def ratings-plan-nodes
   [:__result__ [(heap-file-scan "ratings")
+                #_(selection [= :userId "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
                 (limit 2)]])
 
 (def tags-plan-nodes
   [:__result__ [(heap-file-scan "tags")
                 (sort :movieId)
+                #_(selection [= :userId "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
                 (limit 2)]])
 
 (comment
