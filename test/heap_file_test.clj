@@ -11,7 +11,7 @@
 (def dog-table "dog")
 (def row ["a" "b" "cd"])
 (def full-page-directory (mapcat identity (repeat 0 (count->unsigned-short-arr page-size))))
-(def used-page-directory (concat (count->unsigned-short-arr 11) (drop 2 empty-page-directory)))
+(def used-page-directory (concat (count->unsigned-short-arr 9) (drop 2 empty-page-directory)))
 
 (deftest partition-rows-test
   (testing "Distributes rows across indexes until no rows are left in empty page dir"

@@ -25,9 +25,7 @@
 (def free-offset-size 2)
 (def count-size 2)
 (def static-meta-size (+ free-offset-size count-size))
-(def start-offset-size 2)
-(def record-id-size 2)
-(def slot-size (+ start-offset-size record-id-size))
+(def slot-size 2)
 (def page-directory-entry-size 2)
 (def page-directory-entries-num (/ page-size page-directory-entry-size))
 (def empty-page-directory
@@ -51,10 +49,6 @@
            res (do (.seek reader (* page-size i1)) (.read reader arr))]
        (when (pos? res) (cons arr (read reader rem-indexes)))))))
 
-(comment
-  (with-open [stream (RandomAccessFile. "dog_table.cljdb" "r")]
-    (read stream [9])))
-
 (defn- take-data-rows [col-num ^bytes page]
   (->> (unsigned-short-arr->count (take-last free-offset-size page))
        (java.util.Arrays/copyOfRange page 0)
@@ -68,7 +62,6 @@
 (defn- data->bytes [row]
   (map #(let [b (.getBytes ^String %)] (cons (count b) b)) row))
 
-;TODO: Static meta should not be here, it wastes some bytes that can't be filled 
 (defn- insertable-rows [bytes-available rows]
   (loop [acc []
          bytes-count 0
@@ -84,8 +77,8 @@
   (let [static-meta (mapcat count->unsigned-short-arr [(count rows) (count (flatten rows))])]
     (concat
      [rows]
-     (map concat (map count->unsigned-short-arr (reductions + (cons 0 (butlast (map (comp count flatten) rows)))))
-          (map count->unsigned-short-arr (iterate inc 1)))
+     (map concat (map count->unsigned-short-arr
+                      (reductions + (cons 0 (butlast (map (comp count flatten) rows))))))
      static-meta)))
 
 (defn- flatten-page [page-data]

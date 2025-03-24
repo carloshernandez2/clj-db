@@ -46,9 +46,6 @@
         <mxCell id="JhfrGm3bl157l_BFd9pG-7" value="N" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
           <mxGeometry x="770" y="300" width="30" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="JhfrGm3bl157l_BFd9pG-8" value="RID" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-          <mxGeometry x="910" y="300" width="60" height="40" as="geometry" />
-        </mxCell>
         <mxCell id="JhfrGm3bl157l_BFd9pG-11" value="Count" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="970" y="280" width="40" height="60" as="geometry" />
         </mxCell>
@@ -89,7 +86,7 @@
           <mxGeometry x="980" y="70" width="40" height="40" as="geometry" />
         </mxCell>
         <mxCell id="uQeXBm5_2oiLNZzTdzhn-19" value="Start offset" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-          <mxGeometry x="850" y="300" width="60" height="40" as="geometry" />
+          <mxGeometry x="850" y="300" width="120" height="40" as="geometry" />
         </mxCell>
         <mxCell id="uQeXBm5_2oiLNZzTdzhn-20" value="Page size 4KiB" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="1" vertex="1">
           <mxGeometry x="765" y="-210" width="100" height="30" as="geometry" />
