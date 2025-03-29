@@ -1,11 +1,11 @@
 (ns query-executor
-  (:refer-clojure :exclude [and or sort merge < >])
+  (:refer-clojure :exclude [and or sort < >])
   (:require
    [clojure.core :as core]
    [clojure.data.csv :as csv]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.set :refer [rename-keys]]
+   [clojure.set :refer [rename-keys] :as set]
    [heap-file :as heap-file])
   (:import
    (java.io Closeable RandomAccessFile)))
@@ -18,14 +18,12 @@
 ; - Selection: Filters rows based on max 2 conditions which can be combined with 'AND' or 'OR'
 ; - Limit: Limits the number of results
 ; - Sort: Sorts in ascending order by the given fields
-; - Merge: Merge the result of many queries (Like union in SQL)
+; - Nested Loops Join: Carthesian product of two tables to which a filter is applied (JOIN in SQL)
 
 (set! *warn-on-reflection* true)
 
 (defn- file-data->maps [columns heap-file-data]
-  (let [columns-struct (apply create-struct columns)]
-    (map (partial apply struct columns-struct)
-         heap-file-data)))
+  (map (partial zipmap columns) heap-file-data))
 
 (defn heap-file-scan [table]
   (fn [_]
@@ -84,15 +82,25 @@
   (fn [{:keys [__result__]}]
     {:__result__ (sort-by (apply juxt fields) __result__)}))
 
-(defn merge
-  [& tables]
+(defn nested-loops-join
+  [[op v1 v2] t-name]
   (fn [{:keys [__result__] :as iresultset}]
-    {:__result__ (apply concat __result__ (map (fn [table] (table iresultset)) tables))}))
+    {:__result__
+     (let [t (t-name iresultset)
+           duplicate-keys (seq (set/intersection (set (keys (first __result__)))
+                                                 (set (keys (first t)))))
+           name-mapping (->> duplicate-keys
+                             (map #(keyword (name t-name) (name %)))
+                             (zipmap duplicate-keys))
+           renamed-t (map #(set/rename-keys % name-mapping) t)]
+       (for [row1 __result__ row2 renamed-t
+             :when (op (v1 row1) (v2 row2))]
+         (merge row1 row2)))}))
 
 (defn execute
   ([plan-nodes] (execute plan-nodes {}))
   ([[current-key current-plan-seq :as plan-nodes] iresultset]
-   (let [res (reduce (fn [acc plan-fn] (core/merge acc (plan-fn acc))) iresultset current-plan-seq)]
+   (let [res (reduce (fn [acc plan-fn] (merge acc (plan-fn acc))) iresultset current-plan-seq)]
      (doseq [^Closeable resource (:__resources__ res)]
        (doall (:__result__ res))
        (.close resource))
