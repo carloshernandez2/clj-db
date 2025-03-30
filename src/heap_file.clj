@@ -155,8 +155,6 @@
         (write-rows writer (csv/read-csv table-reader))))))
 
 (comment
-  #_{:clj-kondo/ignore [:unresolved-namespace]}
-  (user/run-tests)
   (create-table-from-csv "person")
   (create-table-from-csv "dog")
   (create-table-from-csv "movies")
