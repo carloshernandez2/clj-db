@@ -2,27 +2,31 @@
   (:refer-clojure :exclude [and or sort < >])
   (:require
    [clojure.test :refer [deftest is]]
-   [query-executor :refer [< > and csv-scan execute heap-file-scan limit 
+   [query-executor :refer [< > and csv-scan execute heap-file-scan limit
                            nested-loops-join or projection selection sort]]))
 
 (def person-table "person")
 (def dog-table "dog")
+(def person-columns {:name 0 :age 1 :city 2 :country 3})
+(def dog-columns {:name 0 :age 1 :city 2 :country 3 :owner 4})
 
 (def person-query
   {:__result__
-   [{:name "Alice" :age 30 :city "London" :country "UK"}
-    {:name "Bob" :age 40 :city "Paris" :country "France"}
-    {:name "Charlie" :age 50 :city "Berlin" :country "Germany"}
-    {:name "David" :age 60 :city "Madrid" :country "Spain"}
-    {:name "Eve" :age 70 :city "Rome" :country "Italy"}]})
+   [person-columns
+    [["Alice" 30 "London" "UK"]
+     ["Bob" 40 "Paris" "France"]
+     ["Charlie" 50 "Berlin" "Germany"]
+     ["David" 60 "Madrid" "Spain"]
+     ["Eve" 70 "Rome" "Italy"]]]})
 
 (def dog-query
   {:__result__
-   [{:name "Fido" :age 3 :city "London" :country "UK" :owner "Alice"}
-    {:name "Rex" :age 3 :city "Paris" :country "France" :owner "Bob"}
-    {:name "Rover" :age 7 :city "Berlin" :country "Germany" :owner "Charlie"}
-    {:name "Spot" :age 5 :city "Madrid" :country "Spain" :owner "David"}
-    {:name "Max" :age 6 :city "Rome" :country "Italy" :owner "Eve"}]})
+   [dog-columns
+    [["Fido" 3 "London" "UK" "Alice"]
+     ["Rex" 3 "Paris" "France" "Bob"]
+     ["Rover" 7 "Berlin" "Germany" "Charlie"]
+     ["Spot" 5 "Madrid" "Spain" "David"]
+     ["Max" 6 "Rome" "Italy" "Eve"]]]})
 
 (def intermediate-result-set
   (assoc dog-query :people (:__result__ person-query)))
@@ -41,89 +45,100 @@
                 (limit 2)]])
 
 (deftest csv-scan-test
-  (let [res ((csv-scan person-table) person-query)]
+  (let [res ((csv-scan person-table) {})]
     (is (= {:__result__
-            [{:name "Alice", :age "30", :city "London", :country "UK"}
-             {:name "Bob", :age "40", :city "Paris", :country "France"}
-             {:name "Charlie", :age "50", :city "Berlin", :country "Germany"}
-             {:name "David", :age "60", :city "Madrid", :country "Spain"}
-             {:name "Eve", :age "70", :city "Rome", :country "Italy"}]}
+            [{:name 0, :age 1, :city 2, :country 3}
+             [["Alice" "30" "London" "UK"]
+              ["Bob" "40" "Paris" "France"]
+              ["Charlie" "50" "Berlin" "Germany"]
+              ["David" "60" "Madrid" "Spain"]
+              ["Eve" "70" "Rome" "Italy"]]]}
            (select-keys res [:__result__])))
     (.close (first (:__resources__ res)))))
 
 (deftest heap-file-scan-test
-  (let [res ((heap-file-scan person-table) person-query)]
+  (let [res ((heap-file-scan dog-table) {})]
     (is (= {:__result__
-            [{:name "Alice", :age "30", :city "London", :country "UK"}
-             {:name "Bob", :age "40", :city "Paris", :country "France"}
-             {:name "Charlie", :age "50", :city "Berlin", :country "Germany"}
-             {:name "David", :age "60", :city "Madrid", :country "Spain"}
-             {:name "Eve", :age "70", :city "Rome", :country "Italy"}]}
+            [{:name 0, :age 1, :city 2, :country 3, :owner 4}
+             [["Fido" "3" "London" "UK" "Alice"]
+              ["Rex" "3" "Paris" "France" "Bob"]
+              ["Rover" "7" "Berlin" "Germany" "Charlie"]
+              ["Spot" "5" "Madrid" "Spain" "David"]
+              ["Max" "6" "Rome" "Italy" "Eve"]]]}
            (select-keys res [:__result__])))
     (.close (first (:__resources__ res)))))
 
 (deftest projection-test
-  (is (= {:__result__ [{:name "Alice" :age 30}
-                       {:name "Bob" :age 40}
-                       {:name "Charlie" :age 50}
-                       {:name "David" :age 60}
-                       {:name "Eve" :age 70}]} ((projection :name :age) person-query))))
+  (is (= {:__result__ [{:name 0 :age 1}
+                       [["Alice" 30]
+                        ["Bob" 40]
+                        ["Charlie" 50]
+                        ["David" 60]
+                        ["Eve" 70]]]} ((projection :name :age) person-query))))
 
 (deftest selection-test
-  (is (= {:__result__ [{:name "Bob" :age 40 :city "Paris" :country "France"}
-                       {:name "Charlie" :age 50 :city "Berlin" :country "Germany"}
-                       {:name "David" :age 60 :city "Madrid" :country "Spain"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
+                       [["Bob" 40 "Paris" "France"]
+                        ["Charlie" 50 "Berlin" "Germany"]
+                        ["David" 60 "Madrid" "Spain"]]]}
          ((selection [> :age 30] and [< :age 70]) person-query)))
-  (is (= {:__result__ [{:name "Alice" :age 30 :city "London" :country "UK"}
-                       {:name "Bob" :age 40 :city "Paris" :country "France"}
-                       {:name "Charlie" :age 50 :city "Berlin" :country "Germany"}
-                       {:name "David" :age 60 :city "Madrid" :country "Spain"}
-                       {:name "Eve" :age 70 :city "Rome" :country "Italy"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
+                       [["Alice" 30 "London" "UK"]
+                        ["Bob" 40 "Paris" "France"]
+                        ["Charlie" 50 "Berlin" "Germany"]
+                        ["David" 60 "Madrid" "Spain"]
+                        ["Eve" 70 "Rome" "Italy"]]]}
          ((selection [> :age 30] or [= :age 30]) person-query)))
-  (is (= {:__result__ [{:name "Bob" :age 40 :city "Paris" :country "France"}
-                       {:name "Charlie" :age 50 :city "Berlin" :country "Germany"}
-                       {:name "David" :age 60 :city "Madrid" :country "Spain"}
-                       {:name "Eve" :age 70 :city "Rome" :country "Italy"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
+                       [["Bob" 40 "Paris" "France"]
+                        ["Charlie" 50 "Berlin" "Germany"]
+                        ["David" 60 "Madrid" "Spain"]
+                        ["Eve" 70 "Rome" "Italy"]]]}
          ((selection [> :age 30]) person-query))))
 
 (deftest limit-test
-  (is (= {:__result__ [{:name "Alice" :age 30 :city "London" :country "UK"}
-                       {:name "Bob" :age 40 :city "Paris" :country "France"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
+                       [["Alice" 30 "London" "UK"]
+                        ["Bob"  40 "Paris" "France"]]]}
          ((limit 2) person-query))))
 
 (deftest sort-test
-  (is (= {:__result__ [{:name "Alice" :age 30 :city "London" :country "UK"}
-                       {:name "Bob" :age 40 :city "Paris" :country "France"}
-                       {:name "Charlie" :age 50 :city "Berlin" :country "Germany"}
-                       {:name "David" :age 60 :city "Madrid" :country "Spain"}
-                       {:name "Eve" :age 70 :city "Rome" :country "Italy"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
+                       [["Alice" 30 "London" "UK"]
+                        ["Bob" 40 "Paris" "France"]
+                        ["Charlie" 50 "Berlin" "Germany"]
+                        ["David" 60 "Madrid" "Spain"]
+                        ["Eve" 70 "Rome" "Italy"]]]}
          ((sort :age) person-query)))
-  (is (= {:__result__ [{:name "Rex" :age 3 :city "Paris" :country "France" :owner "Bob"}
-                       {:name "Fido" :age 3 :city "London" :country "UK" :owner "Alice"}
-                       {:name "Spot" :age 5 :city "Madrid" :country "Spain" :owner "David"}
-                       {:name "Max" :age 6 :city "Rome" :country "Italy" :owner "Eve"}
-                       {:name "Rover" :age 7 :city "Berlin" :country "Germany" :owner "Charlie"}]}
+  (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3 :owner 4}
+                       [["Rex" 3 "Paris" "France" "Bob"]
+                        ["Fido" 3 "London" "UK" "Alice"]
+                        ["Spot" 5 "Madrid" "Spain" "David"]
+                        ["Max" 6 "Rome" "Italy" "Eve"]
+                        ["Rover"  7 "Berlin" "Germany" "Charlie"]]]}
          ((sort :age :country) dog-query))))
 
 (deftest nested-loops-join-test
   (is (= {:__result__
-          [{:age 3 :name "Fido" :city "London" :people/country "UK" :people/age 30
-            :people/city "London" :people/name "Alice" :country "UK" :owner "Alice"}
-           {:age 3 :name "Rex" :city "Paris" :people/country "France" :people/age 40
-            :people/city "Paris" :people/name "Bob" :country "France" :owner "Bob"}
-           {:age 7 :name "Rover" :city "Berlin" :people/country "Germany" :people/age 50
-            :people/city "Berlin" :people/name "Charlie" :country "Germany" :owner "Charlie"}
-           {:age 5 :name "Spot" :city "Madrid" :people/country "Spain" :people/age 60
-            :people/city "Madrid" :people/name "David" :country "Spain" :owner "David"}
-           {:age 6 :name "Max" :city "Rome" :people/country "Italy" :people/age 70
-            :people/city "Rome" :people/name "Eve" :country "Italy" :owner "Eve"}]}
+          [{:name 0 :age 1 :city 2 :country 3 :owner 4 :people/name 5 :people/age 6 :people/city 7 :people/country 8}
+           [["Fido" 3 "London" "UK" "Alice" "Alice" 30 "London" "UK"]
+            ["Rex" 3 "Paris" "France" "Bob" "Bob" 40 "Paris" "France"]
+            ["Rover" 7 "Berlin" "Germany" "Charlie" "Charlie" 50 "Berlin" "Germany"]
+            ["Spot" 5 "Madrid" "Spain" "David" "David" 60 "Madrid" "Spain"]
+            ["Max" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]]]}
          ((nested-loops-join
            [= :city :people/city] :people) intermediate-result-set))))
 
 (deftest execute-test
   (is (= [{:name "Rex" :age "3" :city "Paris" :people/age "40"
            :people/name "Bob" :people/city "Paris"}]
-         (execute plan-nodes))))
+         (execute plan-nodes)))
+  (is (= [{:name "Carlos" :a "a" :people1/name "Carlos" :b "b" :people2/name "Carlos"}]
+         (execute [:people1 [(constantly {:__result__ [{:name 0 :a 1} [["Carlos" "a"]]]})]
+                   :people2 [(constantly {:__result__ [{:b 0 :name 1} [["b" "Carlos"]]]})]
+                   :__result__ [(constantly {:__result__ [{:name 0} [["Carlos"]]]})
+                                (nested-loops-join [= :name :people1/name] :people1)
+                                (nested-loops-join [= :name :people2/name] :people2)]]))))
 
 (def movies-plan-nodes-csv
   [:__result__ [(csv-scan "movies")
@@ -169,4 +184,3 @@
   (execute ratings-plan-nodes)
   (time (execute tags-plan-nodes))
   (time (execute ratings-by-movie)))
-

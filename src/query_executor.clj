@@ -26,28 +26,32 @@
   (map (partial zipmap columns) heap-file-data))
 
 (defn heap-file-scan [table]
-  (fn [_]
+  (fn [{resources :__resources__}]
     (let [table-reader (RandomAccessFile. (str table "_table.cljdb") "r")
           catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
-          columns (:columns (edn/read catalog-reader))]
-      {:__result__ (file-data->maps columns (heap-file/scan table-reader (count columns)))
-       :__resources__ [table-reader catalog-reader]})))
+          columns  (into (array-map) (map-indexed (fn [idx val] [val idx])
+                                                  (:columns (edn/read catalog-reader))))]
+      {:__result__ [columns (heap-file/scan table-reader (count columns))]
+       :__resources__ (concat resources [table-reader catalog-reader])})))
 
 (defn csv-scan
   [table]
-  (fn [_]
+  (fn [{resources :__resources__}]
     (let [table-reader (io/reader (str table "_table.csv"))
           catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
-          columns (:columns (edn/read catalog-reader))]
-      {:__result__ (file-data->maps columns (rest (csv/read-csv table-reader)))
-       :__resources__ [table-reader catalog-reader]})))
+          columns (into (array-map) (map-indexed (fn [idx val] [val idx])
+                                                 (:columns (edn/read catalog-reader))))]
+      {:__result__ [columns (rest (csv/read-csv table-reader))]
+       :__resources__ (concat resources [table-reader catalog-reader])})))
 
 (defn projection
   [& cols]
-  (fn [{:keys [__result__]}]
-    {:__result__ (map (fn [row]
-                        (select-keys row cols))
-                      __result__)}))
+  (fn [{[columns rows] :__result__}]
+    (let [indexed-cols (into (array-map) (filter (comp (set cols) first)) columns)]
+      {:__result__
+       [indexed-cols
+        (map (fn [row]
+               (keep-indexed #(when ((set/map-invert indexed-cols) %1) %2) row)) rows)]})))
 
 (defn and [res1 res2]
   (core/and res1 res2))
@@ -65,46 +69,52 @@
 
 (defn selection
   [[fn1 field1 val1] & [expr [fn2 field2 val2]]]
-  (fn [{:keys [__result__]}]
-    {:__result__ (filter (fn [row]
-                           (cond fn2 (expr (fn1 (field1 row) val1)
-                                           (fn2 (field2 row) val2))
-                                 :else (fn1 (field1 row) val1)))
-                         __result__)}))
+  (fn [{[columns rows] :__result__}]
+    {:__result__
+     [columns (filter (fn [row]
+                        (if fn2
+                          (expr (fn1 (nth row (columns field1)) val1)
+                                (fn2 (nth row (columns field2)) val2))
+                          (fn1 (nth row (columns field1)) val1)))
+                      rows)]}))
 
 (defn limit
   [n]
-  (fn [{:keys [__result__]}]
-    {:__result__ (take n __result__)}))
+  (fn [{[columns rows] :__result__}]
+    {:__result__ [columns (take n rows)]}))
 
 (defn sort
   [& fields]
-  (fn [{:keys [__result__]}]
-    {:__result__ (sort-by (apply juxt fields) __result__)}))
+  (fn [{[columns rows] :__result__}]
+    {:__result__
+     [columns
+      (sort-by (apply juxt (map (fn [field] #(nth % (columns field))) fields)) rows)]}))
 
 (defn nested-loops-join
   [[op v1 v2] t-name]
-  (fn [{:keys [__result__] :as iresultset}]
-    {:__result__
-     (let [t (t-name iresultset)
-           duplicate-keys (seq (set/intersection (set (keys (first __result__)))
-                                                 (set (keys (first t)))))
-           name-mapping (->> duplicate-keys
-                             (map #(keyword (name t-name) (name %)))
-                             (zipmap duplicate-keys))
-           renamed-t (map #(set/rename-keys % name-mapping) t)]
-       (for [row1 __result__ row2 renamed-t
-             :when (op (v1 row1) (v2 row2))]
-         (merge row1 row2)))}))
+  (fn [{[columns rows] :__result__ :as iresultset}]
+    (let [[t-columns t] (t-name iresultset)
+          renamed-t-cols (into (array-map)
+                               (map (fn [[k v]]
+                                      (if (columns k)
+                                        [(keyword (name t-name) (name k)) v] [k v])))
+                               t-columns)]
+      {:__result__
+       [(into (array-map)
+              (map (partial vector) (concat (keys columns) (keys renamed-t-cols)) (range)))
+        (for [row1 rows row2 t
+              :when (op (nth row1 (columns v1))
+                        (nth row2 (renamed-t-cols v2)))]
+          (into [] (concat row1 row2)))]})))
 
 (defn execute
   ([plan-nodes] (execute plan-nodes {}))
   ([[current-key current-plan-seq :as plan-nodes] iresultset]
    (let [res (reduce (fn [acc plan-fn] (merge acc (plan-fn acc))) iresultset current-plan-seq)]
-     (doseq [^Closeable resource (:__resources__ res)]
-       (doall (:__result__ res))
-       (.close resource))
      (if-let [next-plan-nodes (nnext plan-nodes)]
        (recur next-plan-nodes (rename-keys res {:__result__ current-key}))
-       (:__result__ res)))))
-
+       (let [[columns rows] (:__result__ res)]
+         (doall rows)
+         (doseq [^Closeable resource (:__resources__ res)]
+           (.close resource))
+         (file-data->maps (keys columns) rows))))))
