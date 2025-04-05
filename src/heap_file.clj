@@ -53,7 +53,8 @@
   (->> (unsigned-short-arr->count (take-last free-offset-size page))
        (java.util.Arrays/copyOfRange page 0)
        stringify
-       (partition col-num)))
+       (partition col-num)
+       (map vec)))
 
 (defn scan [reader col-num]
   (mapcat (partial take-data-rows col-num)

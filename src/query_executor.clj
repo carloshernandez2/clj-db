@@ -51,7 +51,7 @@
       {:__result__
        [indexed-cols
         (map (fn [row]
-               (keep-indexed #(when ((set/map-invert indexed-cols) %1) %2) row)) rows)]})))
+               (into [] (keep-indexed #(when ((set/map-invert indexed-cols) %1) %2)) row)) rows)]})))
 
 (defn and [res1 res2]
   (core/and res1 res2))
@@ -73,9 +73,9 @@
     {:__result__
      [columns (filter (fn [row]
                         (if fn2
-                          (expr (fn1 (nth row (columns field1)) val1)
-                                (fn2 (nth row (columns field2)) val2))
-                          (fn1 (nth row (columns field1)) val1)))
+                          (expr (fn1 (get row (columns field1)) val1)
+                                (fn2 (get row (columns field2)) val2))
+                          (fn1 (get row (columns field1)) val1)))
                       rows)]}))
 
 (defn limit
@@ -88,7 +88,7 @@
   (fn [{[columns rows] :__result__}]
     {:__result__
      [columns
-      (sort-by (apply juxt (map (fn [field] #(nth % (columns field))) fields)) rows)]}))
+      (sort-by (apply juxt (map (fn [field] #(get % (columns field))) fields)) rows)]}))
 
 (defn nested-loops-join
   [[op v1 v2] t-name]
@@ -103,8 +103,8 @@
        [(into (array-map)
               (map (partial vector) (concat (keys columns) (keys renamed-t-cols)) (range)))
         (for [row1 rows row2 t
-              :when (op (nth row1 (columns v1))
-                        (nth row2 (renamed-t-cols v2)))]
+              :when (op (get row1 (columns v1))
+                        (get row2 (renamed-t-cols v2)))]
           (into [] (concat row1 row2)))]})))
 
 (defn execute
