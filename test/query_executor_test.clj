@@ -2,8 +2,9 @@
   (:refer-clojure :exclude [and or sort < >])
   (:require
    [clojure.test :refer [deftest is]]
-   [query-executor :refer [< > and csv-scan execute heap-file-scan limit
-                           nested-loops-join or projection selection sort]]))
+   [query-executor :refer [< > and csv-scan execute hash-join heap-file-scan
+                           limit nested-loops-join or projection selection
+                           sort]]))
 
 (def person-table "person")
 (def dog-table "dog")
@@ -118,16 +119,18 @@
                         ["Rover"  7 "Berlin" "Germany" "Charlie"]]]}
          ((sort :age :country) dog-query))))
 
-(deftest nested-loops-join-test
-  (is (= {:__result__
-          [{:name 0 :age 1 :city 2 :country 3 :owner 4 :people/name 5 :people/age 6 :people/city 7 :people/country 8}
-           [["Fido" 3 "London" "UK" "Alice" "Alice" 30 "London" "UK"]
-            ["Rex" 3 "Paris" "France" "Bob" "Bob" 40 "Paris" "France"]
-            ["Rover" 7 "Berlin" "Germany" "Charlie" "Charlie" 50 "Berlin" "Germany"]
-            ["Spot" 5 "Madrid" "Spain" "David" "David" 60 "Madrid" "Spain"]
-            ["Max" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]]]}
-         ((nested-loops-join
-           [= :city :people/city] :people) intermediate-result-set))))
+(deftest join-test
+  (let [res {:__result__
+             [{:name 0 :age 1 :city 2 :country 3 :owner 4 :people/name 5 :people/age 6 :people/city 7 :people/country 8}
+              [["Fido" 3 "London" "UK" "Alice" "Alice" 30 "London" "UK"]
+               ["Rex" 3 "Paris" "France" "Bob" "Bob" 40 "Paris" "France"]
+               ["Rover" 7 "Berlin" "Germany" "Charlie" "Charlie" 50 "Berlin" "Germany"]
+               ["Spot" 5 "Madrid" "Spain" "David" "David" 60 "Madrid" "Spain"]
+               ["Max" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]]]}]
+    (is (= res ((nested-loops-join
+                 [= :city :people/city] :people) intermediate-result-set)))
+    (is (= res ((hash-join
+                 [= :city :people/city] :people) intermediate-result-set)))))
 
 (deftest execute-test
   (is (= [{:name "Rex" :age "3" :city "Paris" :people/age "40"
@@ -170,10 +173,16 @@
                 #_(selection [= :userId "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
                 (limit 2)]])
 
-(def ratings-by-movie
+(def ratings-by-movie-nested-loops
   [:movies [(heap-file-scan "movies")]
    :__result__ [(heap-file-scan "ratings")
                 (nested-loops-join [= :movieId :movies/movieId] :movies)
+                (limit 2)]])
+
+(def ratings-by-movie-hash
+  [:ratings [(heap-file-scan "ratings")]
+   :__result__ [(heap-file-scan "movies")
+                (hash-join [= :movieId :ratings/movieId] :ratings)
                 (limit 2)]])
 
 (comment
@@ -183,4 +192,5 @@
   (execute movies-plan-nodes)
   (execute ratings-plan-nodes)
   (time (execute tags-plan-nodes))
-  (time (execute ratings-by-movie)))
+  (time (execute ratings-by-movie-nested-loops))
+  (time (execute ratings-by-movie-hash)))

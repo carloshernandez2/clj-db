@@ -19,6 +19,7 @@
 ; - Limit: Limits the number of results
 ; - Sort: Sorts in ascending order by the given fields
 ; - Nested Loops Join: Carthesian product of two tables to which a filter is applied (JOIN in SQL)
+; - Hash Join: Builds a hash map from one table and uses it to find matching rows in the other. Only applicable for equijoins.
 
 (set! *warn-on-reflection* true)
 
@@ -90,8 +91,8 @@
      [columns
       (sort-by (apply juxt (map (fn [field] #(get % (columns field))) fields)) rows)]}))
 
-(defn nested-loops-join
-  [[op v1 v2] t-name]
+(defn- base-join
+  [f t-name]
   (fn [{[columns rows] :__result__ :as iresultset}]
     (let [[t-columns t] (t-name iresultset)
           renamed-t-cols (into (array-map)
@@ -102,10 +103,28 @@
       {:__result__
        [(into (array-map)
               (map (partial vector) (concat (keys columns) (keys renamed-t-cols)) (range)))
-        (for [row1 rows row2 t
-              :when (op (get row1 (columns v1))
-                        (get row2 (renamed-t-cols v2)))]
-          (into [] (concat row1 row2)))]})))
+        (f [columns rows] [renamed-t-cols t])]})))
+
+(defn nested-loops-join
+  [[op v1 v2] t-name]
+  (base-join
+   (fn [[t1-columns t1-rows] [t2-columns t2-rows]]
+     (for [row1 t1-rows row2 t2-rows
+           :when (op (get row1 (t1-columns v1))
+                     (get row2 (t2-columns v2)))]
+       (vec (concat row1 row2)))) t-name))
+
+(defn hash-join
+  [[op v1 v2] t-name]
+  (assert (= op =) "Hash join only works on equijoins")
+  (base-join
+   (fn [[t1-columns t1-rows] [t2-columns t2-rows]]
+     (let [hash-table (group-by #(get % (t1-columns v1)) t1-rows)]
+       (mapcat
+        identity
+        (for [row2 t2-rows
+              :let [field (get row2 (t2-columns v2))]]
+          (map (fn [row1] (vec (concat row1 row2))) (hash-table field)))))) t-name))
 
 (defn execute
   ([plan-nodes] (execute plan-nodes {}))
