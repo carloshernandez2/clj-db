@@ -20,6 +20,7 @@
 ; - Sort: Sorts in ascending order by the given fields
 ; - Nested Loops Join: Carthesian product of two tables to which a filter is applied (JOIN in SQL)
 ; - Hash Join: Builds a hash map from one table and uses it to find matching rows in the other. Only applicable for equijoins.
+; - Sort-merge Join: Assumes sorted inputs and creates a cartisian product by traversing tables only once. Only applicable for equijoins.
 
 (set! *warn-on-reflection* true)
 
@@ -125,6 +126,30 @@
         (for [row2 t2-rows
               :let [field (get row2 (t2-columns v2))]]
           (map (fn [row1] (vec (concat row1 row2))) (hash-table field)))))) t-name))
+
+(defn- partition-by-matches
+  [[r1 :as s1] f1 [r2 :as s2] f2]
+  (let [v1 (f1 r1)
+        v2 (f2 r2)]
+    (cond (not (or r1 r2)) []
+          (= v1 v2) (cons
+                     [(take-while #(= v1 (f1 %)) s1) (take-while #(= v2 (f2 %)) s2)]
+                     (lazy-seq (partition-by-matches
+                                (drop-while #(= v1 (f1 %)) s1) f1
+                                (drop-while #(= v2 (f2 %)) s2) f2)))
+          :else (let [vmin (if (< v1 v2) v1 v2)]
+                  (recur (drop-while #(= vmin (f1 %)) s1) f1
+                         (drop-while #(= vmin (f2 %)) s2) f2)))))
+
+(defn sort-merge-join
+  [[op k1 k2] t-name]
+  (assert (= op =) "Sort merge join only works on equijoins")
+  (base-join
+   (fn [[t1-columns t1-rows] [t2-columns t2-rows]]
+     (mapcat identity
+             (map (fn [[g1 g2]] (for [row1 g1 row2 g2] (vec (concat row1 row2))))
+                  (partition-by-matches t1-rows #(get % (t1-columns k1))
+                                        t2-rows #(get % (t2-columns k2)))))) t-name))
 
 (defn execute
   ([plan-nodes] (execute plan-nodes {}))
