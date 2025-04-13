@@ -18,8 +18,9 @@
 ; - Selection: Filters rows based on max 2 conditions which can be combined with 'AND' or 'OR'
 ; - Limit: Limits the number of results
 ; - Sort: Sorts in ascending order by the given fields
-; - Nested Loops Join: Carthesian product of two tables to which a filter is applied (JOIN in SQL)
+; - Nested Loops Join: Cartesian product of two tables to which a filter is applied (JOIN in SQL)
 ; - Hash Join: Builds a hash map from one table and uses it to find matching rows in the other. Only applicable for equijoins.
+; - Sort-merge Join: Assumes sorted inputs and creates a 'mini' Cartesian product with rows matching on a value. Only applicable for equijoins.
 
 (set! *warn-on-reflection* true)
 
@@ -125,6 +126,28 @@
         (for [row2 t2-rows
               :let [field (get row2 (t2-columns v2))]]
           (map (fn [row1] (vec (concat row1 row2))) (hash-table field)))))) t-name))
+
+(defn sort-merge-join
+  [[op k1 k2] t-name]
+  (assert (= op =) "Sort merge join only works on equijoins")
+  (base-join
+   (fn [[t1-columns t1-rows] [t2-columns t2-rows]]
+     (letfn [(get1 [row] (get row (t1-columns k1)))
+             (get2 [row] (get row (t2-columns k2)))
+             (drop-rows [s f vmin v] (cond->> s (= vmin v) (drop-while #(= v (f %)))))
+             (lazy-join [[r1 & more1 :as s1] [[accr :as accs] [r2 & more2 :as s2]]]
+               (let [v1 (when r1 (get1 r1))
+                     nv1 (when more1 (get1 (first more1)))
+                     v2 (when r2 (get2 r2))]
+                 (cond (or (nil? r1) (and (not= v1 nv1) (nil? r2))) []
+                       (= v1 v2) (cons (into (vec r1) r2)
+                                       (lazy-seq (lazy-join s1 [(conj accs r2) more2])))
+                       (when accr (= nv1 (get2 accr))) (recur (rest s1)
+                                                              [[] (concat accs s2)])
+                       :else (let [vmin (if (< v1 v2) v1 v2)]
+                               (recur (drop-rows s1 get1 vmin v1)
+                                      [[] (drop-rows s2 get2 vmin v2)])))))]
+       (lazy-join t1-rows [[] t2-rows]))) t-name))
 
 (defn execute
   ([plan-nodes] (execute plan-nodes {}))

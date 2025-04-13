@@ -4,7 +4,7 @@
    [clojure.test :refer [deftest is]]
    [query-executor :refer [< > and csv-scan execute hash-join heap-file-scan
                            limit nested-loops-join or projection selection
-                           sort]]))
+                           sort sort-merge-join]]))
 
 (def person-table "person")
 (def dog-table "dog")
@@ -14,20 +14,22 @@
 (def person-query
   {:__result__
    [person-columns
-    [["Alice" 30 "London" "UK"]
-     ["Bob" 40 "Paris" "France"]
+    [["Ana" 80 "Athens" "Greece"]
      ["Charlie" 50 "Berlin" "Germany"]
+     ["Alice" 30 "London" "UK"]
      ["David" 60 "Madrid" "Spain"]
+     ["Bob" 40 "Paris" "France"]
      ["Eve" 70 "Rome" "Italy"]]]})
 
 (def dog-query
   {:__result__
    [dog-columns
-    [["Fido" 3 "London" "UK" "Alice"]
-     ["Rex" 3 "Paris" "France" "Bob"]
-     ["Rover" 7 "Berlin" "Germany" "Charlie"]
+    [["Rover" 7 "Berlin" "Germany" "Charlie"]
+     ["Fido" 3 "London" "UK" "Alice"]
      ["Spot" 5 "Madrid" "Spain" "David"]
-     ["Max" 6 "Rome" "Italy" "Eve"]]]})
+     ["Rex" 3 "Paris" "France" "Bob"]
+     ["Max" 6 "Rome" "Italy" "Eve"]
+     ["Tok" 6 "Rome" "Italy" "Eve"]]]})
 
 (def intermediate-result-set
   (assoc dog-query :people (:__result__ person-query)))
@@ -36,8 +38,8 @@
   [:people [(csv-scan person-table)
             (projection :name :age :city)
             (selection [> :age "30"] and [< :age "70"])
-            (limit 2)
-            (sort :age)]
+            (sort :age)
+            (limit 2)]
    :__result__ [(heap-file-scan dog-table)
                 (sort :age :country)
                 (projection :name :age :city)
@@ -71,36 +73,39 @@
 
 (deftest projection-test
   (is (= {:__result__ [{:name 0 :age 1}
-                       [["Alice" 30]
-                        ["Bob" 40]
+                       [["Ana" 80]
                         ["Charlie" 50]
+                        ["Alice" 30]
                         ["David" 60]
+                        ["Bob" 40]
                         ["Eve" 70]]]} ((projection :name :age) person-query))))
 
 (deftest selection-test
   (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
-                       [["Bob" 40 "Paris" "France"]
-                        ["Charlie" 50 "Berlin" "Germany"]
-                        ["David" 60 "Madrid" "Spain"]]]}
+                       [["Charlie" 50 "Berlin" "Germany"]
+                        ["David" 60 "Madrid" "Spain"]
+                        ["Bob" 40 "Paris" "France"]]]}
          ((selection [> :age 30] and [< :age 70]) person-query)))
   (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
-                       [["Alice" 30 "London" "UK"]
-                        ["Bob" 40 "Paris" "France"]
+                       [["Ana" 80 "Athens" "Greece"]
                         ["Charlie" 50 "Berlin" "Germany"]
+                        ["Alice" 30 "London" "UK"]
                         ["David" 60 "Madrid" "Spain"]
+                        ["Bob" 40 "Paris" "France"]
                         ["Eve" 70 "Rome" "Italy"]]]}
          ((selection [> :age 30] or [= :age 30]) person-query)))
   (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
-                       [["Bob" 40 "Paris" "France"]
+                       [["Ana" 80 "Athens" "Greece"]
                         ["Charlie" 50 "Berlin" "Germany"]
                         ["David" 60 "Madrid" "Spain"]
+                        ["Bob" 40 "Paris" "France"]
                         ["Eve" 70 "Rome" "Italy"]]]}
          ((selection [> :age 30]) person-query))))
 
 (deftest limit-test
   (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3}
-                       [["Alice" 30 "London" "UK"]
-                        ["Bob"  40 "Paris" "France"]]]}
+                       [["Ana" 80 "Athens" "Greece"]
+                        ["Charlie" 50 "Berlin" "Germany"]]]}
          ((limit 2) person-query))))
 
 (deftest sort-test
@@ -109,27 +114,32 @@
                         ["Bob" 40 "Paris" "France"]
                         ["Charlie" 50 "Berlin" "Germany"]
                         ["David" 60 "Madrid" "Spain"]
-                        ["Eve" 70 "Rome" "Italy"]]]}
+                        ["Eve" 70 "Rome" "Italy"]
+                        ["Ana" 80 "Athens" "Greece"]]]}
          ((sort :age) person-query)))
   (is (= {:__result__ [{:name 0 :age 1 :city 2 :country 3 :owner 4}
                        [["Rex" 3 "Paris" "France" "Bob"]
                         ["Fido" 3 "London" "UK" "Alice"]
                         ["Spot" 5 "Madrid" "Spain" "David"]
                         ["Max" 6 "Rome" "Italy" "Eve"]
+                        ["Tok" 6 "Rome" "Italy" "Eve"]
                         ["Rover"  7 "Berlin" "Germany" "Charlie"]]]}
          ((sort :age :country) dog-query))))
 
 (deftest join-test
   (let [res {:__result__
              [{:name 0 :age 1 :city 2 :country 3 :owner 4 :people/name 5 :people/age 6 :people/city 7 :people/country 8}
-              [["Fido" 3 "London" "UK" "Alice" "Alice" 30 "London" "UK"]
-               ["Rex" 3 "Paris" "France" "Bob" "Bob" 40 "Paris" "France"]
-               ["Rover" 7 "Berlin" "Germany" "Charlie" "Charlie" 50 "Berlin" "Germany"]
+              [["Rover" 7 "Berlin" "Germany" "Charlie" "Charlie" 50 "Berlin" "Germany"]
+               ["Fido" 3 "London" "UK" "Alice" "Alice" 30 "London" "UK"]
                ["Spot" 5 "Madrid" "Spain" "David" "David" 60 "Madrid" "Spain"]
-               ["Max" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]]]}]
+               ["Rex" 3 "Paris" "France" "Bob" "Bob" 40 "Paris" "France"]
+               ["Max" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]
+               ["Tok" 6 "Rome" "Italy" "Eve" "Eve" 70 "Rome" "Italy"]]]}]
     (is (= res ((nested-loops-join
                  [= :city :people/city] :people) intermediate-result-set)))
     (is (= res ((hash-join
+                 [= :city :people/city] :people) intermediate-result-set)))
+    (is (= res ((sort-merge-join
                  [= :city :people/city] :people) intermediate-result-set)))))
 
 (deftest execute-test
