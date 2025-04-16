@@ -88,9 +88,21 @@
 (defn sort
   [& fields]
   (fn [{[columns rows] :__result__}]
-    {:__result__
-     [columns
-      (sort-by (apply juxt (map (fn [field] #(get % (columns field))) fields)) rows)]}))
+    (let [alist (java.util.ArrayList.)
+          yield (fn yield []
+                  (lazy-seq
+                   (when-not (.isEmpty alist)
+                     (cons (vec (.removeFirst alist)) (yield)))))
+          keyfn (apply juxt (mapv (fn [field]
+                                    #(aget ^objects % (columns field)))
+                                  fields))
+          compress-sort (fn compress-sort [[row & more]]
+                          (if row
+                            (do (.add alist (into-array Object row))
+                                (recur more))
+                            (do (.sort alist #(compare (keyfn %1) (keyfn %2)))
+                                (yield))))]
+      {:__result__ [columns (lazy-seq (compress-sort rows))]})))
 
 (defn- base-join
   [f t-name]

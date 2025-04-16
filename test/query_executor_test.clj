@@ -4,7 +4,11 @@
    [clojure.test :refer [deftest is]]
    [query-executor :refer [< > and csv-scan execute hash-join heap-file-scan
                            limit nested-loops-join or projection selection
-                           sort sort-merge-join]]))
+                           sort sort-merge-join]])
+  (:import
+   [java.io Closeable]))
+
+(set! *warn-on-reflection* true)
 
 (def person-table "person")
 (def dog-table "dog")
@@ -57,7 +61,7 @@
               ["David" "60" "Madrid" "Spain"]
               ["Eve" "70" "Rome" "Italy"]]]}
            (select-keys res [:__result__])))
-    (.close (first (:__resources__ res)))))
+    (.close ^Closeable (first (:__resources__ res)))))
 
 (deftest heap-file-scan-test
   (let [res ((heap-file-scan dog-table) {})]
@@ -69,7 +73,7 @@
               ["Spot" "5" "Madrid" "Spain" "David"]
               ["Max" "6" "Rome" "Italy" "Eve"]]]}
            (select-keys res [:__result__])))
-    (.close (first (:__resources__ res)))))
+    (.close ^Closeable (first (:__resources__ res)))))
 
 (deftest projection-test
   (is (= {:__result__ [{:name 0 :age 1}
@@ -174,13 +178,13 @@
 
 (def ratings-plan-nodes
   [:__result__ [(heap-file-scan "ratings")
-                #_(selection [= :userId "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
-                (limit 2)]])
+                (sort :movieId)
+                (limit 100)]])
 
 (def tags-plan-nodes
   [:__result__ [(heap-file-scan "tags")
                 (sort :movieId)
-                #_(selection [= :userId "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+                (selection [= :userId "138472"])
                 (limit 2)]])
 
 (def ratings-by-movie-nested-loops
@@ -195,12 +199,20 @@
                 (hash-join [= :movieId :ratings/movieId] :ratings)
                 (limit 2)]])
 
+(def ratings-by-movie-sort-merge
+  [:ratings [(heap-file-scan "ratings")
+             (sort :movieId)]
+   :__result__ [(heap-file-scan "movies")
+                (hash-join [= :movieId :ratings/movieId] :ratings)
+                (limit 2)]])
+
 (comment
   (execute movies-plan-nodes-csv)
   (execute ratings-plan-nodes-csv)
   (time (execute tags-plan-nodes-csv))
   (execute movies-plan-nodes)
-  (execute ratings-plan-nodes)
+  (time (execute ratings-plan-nodes))
   (time (execute tags-plan-nodes))
   (time (execute ratings-by-movie-nested-loops))
-  (time (execute ratings-by-movie-hash)))
+  (time (execute ratings-by-movie-hash))
+  (time (execute ratings-by-movie-sort-merge)))

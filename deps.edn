@@ -1,4 +1,7 @@
 {:deps {org.clojure/tools.namespace {:mvn/version "1.5.0"}
         org.clojure/data.csv {:mvn/version "1.1.0"}
         org.clojure/tools.reader {:mvn/version "1.5.0"}}
- :paths ["dev" "src" "test"]}
+ :aliases {:dev {:jvm-opts ["-Djdk.attach.allowAttachSelf"]
+                 :extra-paths ["dev" "test"]
+                 :extra-deps {com.clojure-goes-fast/clj-memory-meter {:mvn/version "0.4.0"}}}}
+ :paths ["src"]}
