@@ -31,9 +31,10 @@
   (fn [{resources :__resources__}]
     (let [table-reader (RandomAccessFile. (str table "_table.cljdb") "r")
           catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
+          catalog (edn/read catalog-reader)
           columns  (into (array-map) (map-indexed (fn [idx val] [val idx])
-                                                  (:columns (edn/read catalog-reader))))]
-      {:__result__ [columns (heap-file/scan table-reader (count columns))]
+                                                  (:columns catalog)))]
+      {:__result__ [columns (heap-file/scan catalog table-reader)]
        :__resources__ (concat resources [table-reader catalog-reader])})))
 
 (defn csv-scan
@@ -41,9 +42,11 @@
   (fn [{resources :__resources__}]
     (let [table-reader (io/reader (str table "_table.csv"))
           catalog-reader (java.io.PushbackReader. (io/reader (str table "_catalog.edn")))
+          catalog (edn/read catalog-reader)
           columns (into (array-map) (map-indexed (fn [idx val] [val idx])
-                                                 (:columns (edn/read catalog-reader))))]
-      {:__result__ [columns (rest (csv/read-csv table-reader))]
+                                                 (:columns catalog)))]
+      {:__result__ [columns (map (partial heap-file/string-row->types catalog)
+                                 (rest (csv/read-csv table-reader)))]
        :__resources__ (concat resources [table-reader catalog-reader])})))
 
 (defn projection
@@ -61,13 +64,11 @@
 (defn or [res1 res2]
   (core/or res1 res2))
 
-;TODO: Delete when schema is supported
 (defn > [n1 n2]
   (pos? (compare n1 n2)))
 
 (defn < [n1 n2]
   (neg? (compare n1 n2)))
-;------------------------------------
 
 (defn selection
   [[fn1 field1 val1] & [expr [fn2 field2 val2]]]

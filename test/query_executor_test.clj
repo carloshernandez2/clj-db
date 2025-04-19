@@ -41,13 +41,13 @@
 (def plan-nodes
   [:people [(csv-scan person-table)
             (projection :name :age :city)
-            (selection [> :age "30"] and [< :age "70"])
+            (selection [> :age 30] and [< :age 70])
             (sort :age)
             (limit 2)]
    :__result__ [(heap-file-scan dog-table)
                 (sort :age :country)
                 (projection :name :age :city)
-                (selection [< :age "4"])
+                (selection [< :age 4])
                 (nested-loops-join [= :city :people/city] :people)
                 (limit 2)]])
 
@@ -55,11 +55,11 @@
   (let [res ((csv-scan person-table) {})]
     (is (= {:__result__
             [{:name 0, :age 1, :city 2, :country 3}
-             [["Alice" "30" "London" "UK"]
-              ["Bob" "40" "Paris" "France"]
-              ["Charlie" "50" "Berlin" "Germany"]
-              ["David" "60" "Madrid" "Spain"]
-              ["Eve" "70" "Rome" "Italy"]]]}
+             [["Alice" 30 "London" "UK"]
+              ["Bob" 40 "Paris" "France"]
+              ["Charlie" 50 "Berlin" "Germany"]
+              ["David" 60 "Madrid" "Spain"]
+              ["Eve" 70 "Rome" "Italy"]]]}
            (select-keys res [:__result__])))
     (.close ^Closeable (first (:__resources__ res)))))
 
@@ -67,11 +67,11 @@
   (let [res ((heap-file-scan dog-table) {})]
     (is (= {:__result__
             [{:name 0, :age 1, :city 2, :country 3, :owner 4}
-             [["Fido" "3" "London" "UK" "Alice"]
-              ["Rex" "3" "Paris" "France" "Bob"]
-              ["Rover" "7" "Berlin" "Germany" "Charlie"]
-              ["Spot" "5" "Madrid" "Spain" "David"]
-              ["Max" "6" "Rome" "Italy" "Eve"]]]}
+             [["Fido" 3 "London" "UK" "Alice"]
+              ["Rex" 3 "Paris" "France" "Bob"]
+              ["Rover" 7 "Berlin" "Germany" "Charlie"]
+              ["Spot" 5 "Madrid" "Spain" "David"]
+              ["Max" 6 "Rome" "Italy" "Eve"]]]}
            (select-keys res [:__result__])))
     (.close ^Closeable (first (:__resources__ res)))))
 
@@ -147,7 +147,7 @@
                  [= :city :people/city] :people) intermediate-result-set)))))
 
 (deftest execute-test
-  (is (= [{:name "Rex" :age "3" :city "Paris" :people/age "40"
+  (is (= [{:name "Rex" :age 3 :city "Paris" :people/age 40
            :people/name "Bob" :people/city "Paris"}]
          (execute plan-nodes)))
   (is (= [{:name "Carlos" :a "a" :people1/name "Carlos" :b "b" :people2/name "Carlos"}]
@@ -178,13 +178,13 @@
 
 (def ratings-plan-nodes
   [:__result__ [(heap-file-scan "ratings")
-                (sort :movieId)
+                (sort :movieId :rating)
                 (limit 100)]])
 
 (def tags-plan-nodes
   [:__result__ [(heap-file-scan "tags")
                 (sort :movieId)
-                (selection [= :userId "138472"])
+                #_(selection [= :userId 138472])
                 (limit 2)]])
 
 (def ratings-by-movie-nested-loops
@@ -203,8 +203,8 @@
   [:ratings [(heap-file-scan "ratings")
              (sort :movieId)]
    :__result__ [(heap-file-scan "movies")
-                (hash-join [= :movieId :ratings/movieId] :ratings)
-                (limit 2)]])
+                (sort-merge-join [= :movieId :ratings/movieId] :ratings)
+                (selection [= :userId 1])]])
 
 (comment
   (execute movies-plan-nodes-csv)

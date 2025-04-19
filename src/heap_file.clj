@@ -4,21 +4,38 @@
    [clojure.data.csv :as csv]
    [clojure.java.io :as io])
   (:import
-   [java.io RandomAccessFile]))
+   [java.io RandomAccessFile]
+   [java.nio ByteBuffer]))
 
 (set! *warn-on-reflection* true)
 
-(defn mask-first-byte ^long
-  [x]
-  (bit-and x 0xff))
+(defn to-bytes ^bytes [b] (if (bytes? b) b (byte-array b)))
 
-(defn count->unsigned-short-arr
-  [x]
-  [(mask-first-byte (bit-shift-right x 8)) (mask-first-byte x)])
+(defn value->bytes [f size v]
+  (let [buf (ByteBuffer/allocate size)]
+    (f buf v)
+    (seq (.array buf))))
 
-(defn unsigned-short-arr->count ^long
-  [[high low]]
-  (bit-or (bit-shift-left (mask-first-byte  high) 8) (mask-first-byte low)))
+(defn bytes->value [f b]
+  (f (ByteBuffer/wrap (to-bytes b))))
+
+(defn short->bytes [v]
+  (value->bytes (memfn ^ByteBuffer putShort ^Short n) Short/BYTES (short v)))
+
+(defn float->bytes [v]
+  (value->bytes (memfn ^ByteBuffer putFloat ^Float n) Float/BYTES (float v)))
+
+(defn int->bytes [v]
+  (value->bytes (memfn ^ByteBuffer putInt ^Integer n) Integer/BYTES (int v)))
+
+(defn bytes->short [b]
+  (bytes->value (memfn ^ByteBuffer getShort) b))
+
+(defn bytes->float [b]
+  (bytes->value (memfn ^ByteBuffer getFloat) b))
+
+(defn bytes->int [b]
+  (bytes->value (memfn ^ByteBuffer getInt) b))
 
 (def page-size 4096)
 (def empty-data-page (byte-array (repeat page-size 0)))
@@ -30,16 +47,42 @@
 (def page-directory-entries-num (/ page-size page-directory-entry-size))
 (def empty-page-directory
   (mapcat identity (repeat page-directory-entries-num
-                           (count->unsigned-short-arr (- page-size static-meta-size)))))
+                           (seq (short->bytes (- page-size static-meta-size))))))
 
-(defn- stringify [^bytes bytes]
+(defn string-row->types [{:keys [schema]} row]
+  (mapv (fn [type v]
+          (case type
+            :string v
+            :float (Float/parseFloat v)
+            :int (Integer/parseInt v))) schema row))
+
+(defn- row->bytes [{:keys [schema]} row]
+  (mapv (fn [type v]
+          (case type
+            :string (let [b (.getBytes ^String v)] (cons (count b) b))
+            :float (float->bytes v)
+            :int (int->bytes v))) schema row))
+
+(defn- bytes->row [{:keys [schema]} row]
+  (mapv (fn [type v]
+          (case type
+            :string (let [b (to-bytes v)] (String. b 1 (dec (alength b))))
+            :float (bytes->float v)
+            :int (bytes->int v))) schema row))
+
+(defn- group-bytes [{:keys [schema]} ^bytes bytes]
   (let [length (alength bytes)
         result (transient [])]
-    (loop [i 0 res result]
+    (loop [i 0 res result schema (mapcat identity (repeat schema))]
       (if (< i length)
-        (let [segment-len (mask-first-byte (aget bytes i))]
-          (recur (+ i 1 segment-len)
-                 (conj! res (String. bytes (inc i) segment-len))))
+        (let [segment-len (case (first schema)
+                            :string (int (inc (Byte/toUnsignedInt (aget bytes i))))
+                            :float Float/BYTES
+                            :int Integer/BYTES)]
+          (recur (+ i segment-len)
+                 (conj! res (seq (java.util.Arrays/copyOfRange
+                                  bytes i (+ i segment-len))))
+                 (rest schema)))
         (persistent! res)))))
 
 (defn read [^RandomAccessFile reader [i1 & rem-indexes]]
@@ -49,37 +92,25 @@
            res (do (.seek reader (* page-size i1)) (.read reader arr))]
        (when (pos? res) (cons arr (read reader rem-indexes)))))))
 
-(defn- take-data-rows [col-num ^bytes page]
-  (->> (unsigned-short-arr->count (take-last free-offset-size page))
-       (java.util.Arrays/copyOfRange page 0)
-       stringify
-       (partition col-num)
-       (map vec)))
+(defn- take-data-rows [{:keys [columns] :as catalog} ^bytes page]
+  (let [page-length (alength page)]
+    (->> (bytes->short (java.util.Arrays/copyOfRange page (- page-length 2) page-length))
+         int
+         (java.util.Arrays/copyOfRange page 0)
+         (group-bytes catalog)
+         (partition (count columns))
+         (sequence (map vec)))))
 
-(defn scan [reader col-num]
-  (mapcat (partial take-data-rows col-num)
+(defn scan [catalog reader]
+  (mapcat #(sequence (map (partial bytes->row catalog)) (take-data-rows catalog %))
           (read reader (filter #(pos? (rem % (inc page-directory-entries-num))) (range)))))
 
-(defn- data->bytes [row]
-  (map #(let [b (.getBytes ^String %)] (cons (count b) b)) row))
-
-(defn- insertable-rows [bytes-available rows]
-  (loop [acc []
-         bytes-count 0
-         remaining rows]
-    (let [current-row (first remaining)
-          bytes (data->bytes current-row)
-          new-count (+ bytes-count (count (flatten bytes)) slot-size)]
-      (if (or (empty? remaining) (> new-count bytes-available))
-        acc
-        (recur (conj acc current-row) new-count (rest remaining))))))
-
 (defn- conj-page-metadata [rows]
-  (let [static-meta (mapcat count->unsigned-short-arr [(count rows) (count (flatten rows))])]
+  (let [static-meta (mapcat short->bytes [(count rows) (count (flatten rows))])]
     (concat
      [rows]
-     (map concat (map count->unsigned-short-arr
-                      (reductions + (cons 0 (butlast (map (comp count flatten) rows))))))
+     (mapcat short->bytes
+             (reductions + (cons 0 (drop-last (map (comp count flatten) rows)))))
      static-meta)))
 
 (defn- flatten-page [page-data]
@@ -87,51 +118,47 @@
         flat-metadata (flatten (rest page-data))]
     (concat flat-rows (repeat (- page-size (count flat-rows) (count flat-metadata)) 0) flat-metadata)))
 
-(defn- build-page ^bytes [rows current-page]
-  (->> (concat (take-data-rows (count (first rows)) current-page) rows)
-       (map data->bytes)
+(defn- build-page ^bytes [catalog rows current-page]
+  (->> (concat (take-data-rows catalog current-page) rows)
        conj-page-metadata
        flatten-page
        byte-array))
 
-(defn index-page-directory [page-directory]
-  (into (sorted-map)
-        (keep-indexed
-         (fn [idx entry]
-           (let [free-count (unsigned-short-arr->count entry)]
-             [(inc idx) free-count])))
-        (partition 2 page-directory)))
+(defn parse-page-directory [page-directory]
+  (mapv bytes->short (partition 2 page-directory)))
 
-(defn partition-rows [indexed-page-directory rows]
-  (loop [indexed-entries indexed-page-directory
-         rows rows
-         result (sorted-map)]
-    (if (or (empty? rows) (empty? indexed-entries))
-      result
-      (let [[[idx free-count] & rest-indexed] indexed-entries
-            data-to-insert (insertable-rows free-count rows)]
-        (recur rest-indexed
-               (drop (count data-to-insert) rows)
-               (cond-> result (not-empty data-to-insert) (assoc idx data-to-insert)))))))
+(defn section-rows [page-directory catalog rows]
+  (subvec
+   (reduce
+    (fn [[result rows] [idx free-count]]
+      (transduce
+       (comp (map (partial row->bytes catalog)) (map (fn [row] [row (+ (count (flatten row)) slot-size)])))
+       (completing
+        (fn [[result remaining acc-count :as all] [bytes row-count]]
+          (let [new-count (+ acc-count row-count)]
+            (if (> new-count free-count)
+              (reduced all)
+              [(update result idx (fnil #(conj % bytes) [])) (rest remaining) new-count]))))
+       [result rows 0] rows))
+    [(sorted-map) rows]
+    (partition 2 (interleave (iterate inc 1) page-directory))) 0 2))
 
 (defn write-rows
-  ([stream rows] (write-rows stream rows 0))
-  ([^RandomAccessFile stream rows section-num]
+  ([stream catalog rows] (write-rows stream catalog rows 0))
+  ([^RandomAccessFile stream catalog rows section-num]
    (let [start-page-num (* section-num (inc page-directory-entries-num))
-         page-directory (or (first (read stream [start-page-num])) empty-page-directory)
-         indexed-page-directory (index-page-directory page-directory)
-         rows-per-index (partition-rows indexed-page-directory rows)
-         indexed-added-byte-count (into (sorted-map)
-                                        (map (fn [[idx rows]]
-                                               [idx (+ (count (flatten (map data->bytes rows)))
-                                                       (* (count rows) slot-size))]))
-                                        rows-per-index)
-         new-page-directory (->> indexed-added-byte-count
-                                 (merge-with - indexed-page-directory)
-                                 vals
-                                 (mapv count->unsigned-short-arr)
-                                 (mapcat identity)
-                                 byte-array)
+         page-directory (parse-page-directory (or (first (read stream [start-page-num])) empty-page-directory))
+         [rows-per-index missing-rows] (section-rows page-directory catalog rows)
+         new-page-directory (byte-array
+                             (sequence (comp
+                                        (map-indexed
+                                         (fn [idx current-count]
+                                           (let [rows (get rows-per-index (inc idx) [])]
+                                             (- current-count
+                                                (count (flatten rows))
+                                                (* (count rows) slot-size)))))
+                                        (map short->bytes)
+                                        cat) page-directory))
          data-to-insert (vals rows-per-index)
          indexes (map (partial + start-page-num) (keys rows-per-index))]
      (.seek stream (* start-page-num page-size))
@@ -140,24 +167,26 @@
                                      (interleave indexes data-to-insert)
                                      (partition 3))]
        (.seek stream (* idx page-size))
-       (.write stream (build-page rows (or (not-empty content) empty-data-page))))
-     (when-let [missing-rows (not-empty (drop (count (mapcat identity data-to-insert)) rows))]
-       (recur stream missing-rows (inc section-num))))))
+       (.write stream (build-page catalog rows (or (not-empty content) empty-data-page))))
+     (when-not (empty? missing-rows)
+       (recur stream catalog missing-rows (inc section-num))))))
 
-(defn create-table-from-csv [table-name]
+(defn create-table-from-csv [table-name config]
   (let [csv-table-name (str table-name "_table.csv")
         catalog-file-name (str table-name "_catalog.edn")
         heapfile-table-name (str table-name "_table.cljdb")]
     (with-open [table-reader (io/reader csv-table-name)
                 writer (RandomAccessFile. heapfile-table-name "rw")]
-      (let [columns (mapv keyword (first (csv/read-csv table-reader)))]
-        (spit catalog-file-name {:columns columns})
+      (let [columns (mapv keyword (first (csv/read-csv table-reader)))
+            catalog (merge config {:columns columns})]
+        (spit catalog-file-name catalog)
         (spit heapfile-table-name "")
-        (write-rows writer (csv/read-csv table-reader))))))
+        (write-rows writer catalog (map (partial string-row->types catalog)
+                                        (csv/read-csv table-reader)))))))
 
 (comment
-  (create-table-from-csv "person")
-  (create-table-from-csv "dog")
-  (create-table-from-csv "movies")
-  (create-table-from-csv "tags")
-  (future (create-table-from-csv "ratings")))
+  (create-table-from-csv "person" {:schema [:string :int :string :string]})
+  (create-table-from-csv "dog" {:schema [:string :int :string :string :string]})
+  (create-table-from-csv "movies" {:schema [:int :string :string]})
+  (create-table-from-csv "tags" {:schema [:int :int :string :int]})
+  (future (create-table-from-csv "ratings" {:schema [:int :int :float :int]})))

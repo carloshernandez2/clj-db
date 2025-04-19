@@ -1,1 +1,1 @@
-{:columns [:name :age :city :country :owner]}
+{:schema [:string :int :string :string :string], :columns [:name :age :city :country :owner]}
