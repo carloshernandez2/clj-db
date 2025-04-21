@@ -138,7 +138,8 @@
         identity
         (for [row2 t2-rows
               :let [field (get row2 (t2-columns v2))]]
-          (map (fn [row1] (vec (concat row1 row2))) (hash-table field)))))) t-name))
+          (sequence (map (fn [row1] (vec (concat row1 row2)))) (hash-table field))))))
+   t-name))
 
 (defn sort-merge-join
   [[op k1 k2] t-name]
@@ -162,14 +163,15 @@
                                       [[] (drop-rows s2 get2 vmin v2)])))))]
        (lazy-join t1-rows [[] t2-rows]))) t-name))
 
+;; NOTE: Beware of multiple references to queries on plan nodes to avoid OOM
 (defn execute
-  ([plan-nodes] (execute plan-nodes {}))
-  ([[current-key current-plan-seq :as plan-nodes] iresultset]
-   (let [res (reduce (fn [acc plan-fn] (merge acc (plan-fn acc))) iresultset current-plan-seq)]
-     (if-let [next-plan-nodes (nnext plan-nodes)]
-       (recur next-plan-nodes (rename-keys res {:__result__ current-key}))
-       (let [[columns rows] (:__result__ res)]
-         (doall rows)
-         (doseq [^Closeable resource (:__resources__ res)]
-           (.close resource))
-         (file-data->maps (keys columns) rows))))))
+  [plan-nodes]
+  (let [{[columns rows] :__result__ resources :__resources__}
+        (reduce
+         (fn [acc v]
+           (if (fn? v) (merge acc (v acc)) (set/rename-keys acc {:__result__ v})))
+         {} (flatten (map reverse (partition 2 plan-nodes))))]
+    (doall rows)
+    (doseq [^Closeable resource resources]
+      (.close resource))
+    (file-data->maps (keys columns) rows)))

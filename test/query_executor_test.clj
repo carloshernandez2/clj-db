@@ -174,45 +174,60 @@
 (def movies-plan-nodes
   [:__result__ [(heap-file-scan "movies")
                 (sort :title)
-                (limit 10)]])
+                (selection [= :movieId 1])]])
 
 (def ratings-plan-nodes
   [:__result__ [(heap-file-scan "ratings")
-                (sort :movieId :rating)
-                (limit 100)]])
+                #_(sort :movieId :rating)
+                (selection [= :movieId 1])
+                (projection :movieId :userId :rating)]])
 
 (def tags-plan-nodes
   [:__result__ [(heap-file-scan "tags")
                 (sort :movieId)
-                #_(selection [= :userId 138472])
-                (limit 2)]])
+                (selection [= :movieId 1])]])
 
+;; NOTE: Will probably take hours
 (def ratings-by-movie-nested-loops
   [:movies [(heap-file-scan "movies")]
    :__result__ [(heap-file-scan "ratings")
                 (nested-loops-join [= :movieId :movies/movieId] :movies)
-                (limit 2)]])
+                (selection [= :userId 1])]])
 
 (def ratings-by-movie-hash
   [:ratings [(heap-file-scan "ratings")]
    :__result__ [(heap-file-scan "movies")
                 (hash-join [= :movieId :ratings/movieId] :ratings)
-                (limit 2)]])
+                (selection [= :userId 1])]])
 
 (def ratings-by-movie-sort-merge
   [:ratings [(heap-file-scan "ratings")
              (sort :movieId)]
    :__result__ [(heap-file-scan "movies")
                 (sort-merge-join [= :movieId :ratings/movieId] :ratings)
-                (selection [= :userId 1])]])
+                (limit 2)]])
+
+(def ratings-by-user-sort-merge
+  [:ratings [(heap-file-scan "ratings")]
+   :__result__ [(heap-file-scan "tags")
+                (sort-merge-join [= :userId :ratings/userId] :ratings)
+                (selection [= :userId 18])]])
+
+(def ratings-by-user-hash
+  [:ratings [(heap-file-scan "ratings")]
+   :__result__ [(heap-file-scan "tags")
+                (hash-join [= :userId :ratings/userId] :ratings)
+                (selection [= :userId 18])]])
 
 (comment
   (execute movies-plan-nodes-csv)
   (execute ratings-plan-nodes-csv)
   (time (execute tags-plan-nodes-csv))
-  (execute movies-plan-nodes)
+  (time (execute movies-plan-nodes))
   (time (execute ratings-plan-nodes))
   (time (execute tags-plan-nodes))
   (time (execute ratings-by-movie-nested-loops))
   (time (execute ratings-by-movie-hash))
-  (time (execute ratings-by-movie-sort-merge)))
+  (time (execute ratings-by-movie-sort-merge))
+  (time (execute ratings-by-user-sort-merge))
+  (time (execute ratings-by-user-hash)))
