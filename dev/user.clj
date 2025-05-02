@@ -1,5 +1,6 @@
 (ns user
-  (:require [clj-memory-meter.core :as mm]))
+  (:require sc.api
+            [clj-memory-meter.core :as mm]))
 
 (def total-time (volatile! 0))
 

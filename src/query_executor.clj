@@ -5,22 +5,23 @@
    [clojure.data.csv :as csv]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.set :refer [rename-keys] :as set]
+   [clojure.set :as set]
    [heap-file :as heap-file])
   (:import
    (java.io Closeable RandomAccessFile)))
 
-; Query executor that takes a parsed query plan made up of plan nodes assigned to query keys and executes it retrieving data from csv files.
-; It makes use of lazy sequences as an interface between query plan nodes to avoid fetching all the data when it is not necessary.
-; It supports the following query plan nodes:
-; - Scan: Creates a lazy sequence of maps whose keys correspond to the values of each of the rows provided by a specified csv file
-; - Projection: Selects columns from the intermediate result and returns them
-; - Selection: Filters rows based on max 2 conditions which can be combined with 'AND' or 'OR'
-; - Limit: Limits the number of results
-; - Sort: Sorts in ascending order by the given fields
-; - Nested Loops Join: Cartesian product of two tables to which a filter is applied (JOIN in SQL)
-; - Hash Join: Builds a hash map from one table and uses it to find matching rows in the other. Only applicable for equijoins.
-; - Sort-merge Join: Assumes sorted inputs and creates a 'mini' Cartesian product with rows matching on a value. Only applicable for equijoins.
+;; Query executor that takes a parsed query plan made up of plan nodes assigned to query keys and executes it retrieving data from csv files.
+;; It makes use of lazy sequences as an interface between query plan nodes to avoid fetching all the data when it is not necessary.
+;; It supports the following query plan nodes:
+;; - Scan: Creates a lazy sequence of maps whose keys correspond to the values of each of the rows provided by a specified csv file
+;; - Projection: Selects columns from the intermediate result and returns them
+;; - Selection: Filters rows based on max 2 conditions which can be combined with 'AND' or 'OR'
+;; - Limit: Limits the number of results
+;; - Sort: Sorts in ascending order by the given fields
+;; - Nested Loops Join: Cartesian product of two tables to which a filter is applied (JOIN in SQL)
+;; - Hash Join: Builds a hash map from one table and uses it to find matching rows in the other. Only applicable for equijoins.
+;; - Sort-merge Join: Assumes sorted inputs and creates a 'mini' Cartesian product with rows matching on a value. Only applicable for equijoins.
+;; - Aggregate: Groups rows by specified columns and applies aggregate functions (e.g., COUNT, AVG) to the grouped data.
 
 (set! *warn-on-reflection* true)
 
@@ -56,7 +57,9 @@
       {:__result__
        [indexed-cols
         (map (fn [row]
-               (into [] (keep-indexed #(when ((set/map-invert indexed-cols) %1) %2)) row)) rows)]})))
+               (into []
+                     (keep-indexed #(when ((set/map-invert indexed-cols) %1) %2))
+                     row)) rows)]})))
 
 (defn and [res1 res2]
   (core/and res1 res2))
@@ -86,23 +89,23 @@
   (fn [{[columns rows] :__result__}]
     {:__result__ [columns (take n rows)]}))
 
+;; NOTE: Breaks sort order ties arbitrarily
 (defn sort
   [& fields]
   (fn [{[columns rows] :__result__}]
-    (let [alist (java.util.ArrayList.)
-          yield (fn yield []
-                  (lazy-seq
-                   (when-not (.isEmpty alist)
-                     (cons (vec (.removeFirst alist)) (yield)))))
-          keyfn (apply juxt (mapv (fn [field]
+    (let [keyfn (apply juxt (mapv (fn [field]
                                     #(aget ^objects % (columns field)))
                                   fields))
+          queue (java.util.PriorityQueue. #(compare (keyfn %1) (keyfn %2)))
+          yield (fn yield []
+                  (lazy-seq
+                   (when-let [e (.poll queue)]
+                     (cons (vec e) (yield)))))
           compress-sort (fn compress-sort [[row & more]]
                           (if row
-                            (do (.add alist (into-array Object row))
+                            (do (.add queue (into-array Object row))
                                 (recur more))
-                            (do (.sort alist #(compare (keyfn %1) (keyfn %2)))
-                                (yield))))]
+                            (yield)))]
       {:__result__ [columns (lazy-seq (compress-sort rows))]})))
 
 (defn- base-join
@@ -155,13 +158,57 @@
                      v2 (when r2 (get2 r2))]
                  (cond (or (nil? r1) (and (not= v1 nv1) (nil? r2))) []
                        (= v1 v2) (cons (into (vec r1) r2)
-                                       (lazy-seq (lazy-join s1 [(conj accs r2) more2])))
-                       (when accr (= nv1 (get2 accr))) (recur (rest s1)
-                                                              [[] (concat accs s2)])
-                       :else (let [vmin (if (< v1 v2) v1 v2)]
-                               (recur (drop-rows s1 get1 vmin v1)
-                                      [[] (drop-rows s2 get2 vmin v2)])))))]
-       (lazy-join t1-rows [[] t2-rows]))) t-name))
+                                       (lazy-seq (lazy-join s1 [s2 more2])))
+                       (when accr (= nv1 (get2 accr))) (recur (rest s1) [accs accs])
+                       :else (let [vmin (if (< v1 v2) v1 v2)
+                                   new-s2 (drop-rows s2 get2 vmin v2)]
+                               (recur (drop-rows s1 get1 vmin v1) [new-s2 new-s2])))))]
+       (lazy-join t1-rows [t2-rows t2-rows]))) t-name))
+
+(defn average [acc v]
+  (cond (= acc ::start) [v 1]
+        (= v ::end) (/ (first acc) (second acc))
+        :else [(+ (first acc) v) (inc (second acc))]))
+
+(defn count' [acc v]
+  (cond (= acc ::start) 1
+        (= v ::end) acc
+        :else (inc acc)))
+
+(defn aggregate [group-cols & ffa]
+  (fn [{[columns rows] :__result__}]
+    (let [get-fn #(fn [row] (get row (columns %)))
+          excluded? (if-let [comparator (when (not-empty group-cols)
+                                          (apply juxt (mapv get-fn group-cols)))]
+                      (fn [r1 r2]
+                        (not= (comparator r1) (comparator r2)))
+                      (constantly false))
+          update-row (fn [acc row fns+cols]
+                       (reduce (fn [acc [f col]]
+                                 (update acc (columns col)
+                                         #(f % (get row (columns col)))))
+                               acc fns+cols))
+          [start-row end-row] (map #(vec (repeat (count (first rows)) %)) [::start ::end])
+          start-fns+cols (for [col group-cols] [(fn [_ v] v) col])
+          remove-starts (fn [acc] (into [] (remove (partial = ::start)) acc))
+          lazy-agg
+          (fn lazy-agg [[r1 & more :as rem-rows] acc]
+            (cond (empty? rem-rows) (cond-> []
+                                      (not= acc start-row)
+                                      (conj (remove-starts (update-row acc end-row ffa))))
+                  (empty? acc) (recur rem-rows (update-row start-row r1 start-fns+cols))
+                  (excluded? acc r1) (cons (remove-starts (update-row acc end-row ffa))
+                                           (lazy-seq (lazy-agg rem-rows [])))
+                  :else (recur more (update-row acc r1 ffa))))
+          old->new-keys (into {} (map (comp vec rest)) ffa)]
+      {:__result__
+       [(into (array-map)
+              (comp
+               (filter (into #{} cat [group-cols (mapv second ffa)]))
+               (map-indexed (fn [i k]
+                              [(if-let [new-k (old->new-keys k)] new-k k) i])))
+              (keys columns))
+        (lazy-seq (lazy-agg rows []))]})))
 
 ;; NOTE: Beware of multiple references to queries on plan nodes to avoid OOM
 (defn execute
